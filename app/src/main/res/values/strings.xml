@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Firi Launcher</string>
+    <string name="accessibility_volume_service_label">Barra de Volumen Firi (Reemplazo Global)</string>
+    <string name="accessibility_volume_service_description">Permite a Firi Launcher interceptar las teclas físicas de volumen en cualquier aplicación (TikTok, YouTube, Instagram, etc.), ocultando la barra de sonido predeterminada del sistema y reemplazándola con la barra de volumen moderna Fusion OS de Firi.</string>
+</resources>

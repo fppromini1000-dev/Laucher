@@ -1,0 +1,6 @@
+{
+  "name": "Firi Launcher",
+  "description": "Launcher minimalista con auto-categorización inteligente, paletas dinámicas y asistente de voz Firi con aprendizaje de hábitos diarios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

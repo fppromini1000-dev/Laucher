@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Fusion OS v16 - Instalación y Setup Wizard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;600;700;800&family=Alex+Brush&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-black: #000000;
+            --term-green: #00ff66;
+            --term-cyan: #00f0ff;
+            --term-amber: #ffb800;
+            --term-white: #f0f6fc;
+            --term-dim: #546e7a;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --surface-glass: rgba(18, 22, 34, 0.75);
+            --border-glass: rgba(255, 255, 255, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-black);
+            overflow: hidden;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            color: #ffffff;
+        }
+
+        /* Contenedor Principal */
+        #app-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #000000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* =======================================================
+           FASE 1: TERMINAL HACKER (SIMULACIÓN DE INSTALACIÓN)
+           ======================================================= */
+        #terminal-screen {
+            position: absolute;
+            inset: 0;
+            background: #000000;
+            z-index: 10;
+            padding: 28px 24px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            font-family: 'Fira Code', monospace;
+            opacity: 1;
+            transition: opacity 0.85s cubic-bezier(0.16, 1, 0.3, 1), transform 0.85s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        #terminal-screen.fade-out {
+            opacity: 0;
+            transform: scale(1.04);
+            pointer-events: none;
+        }
+
+        /* Efecto CRT Scanlines sutil */
+        .scanlines {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.45) 50%
+            );
+            background-size: 100% 4px;
+            z-index: 15;
+            opacity: 0.6;
+        }
+
+        .crt-glow {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            box-shadow: inset 0 0 100px rgba(0, 255, 102, 0.04);
+            z-index: 16;
+        }
+
+        /* Encabezado Terminal */
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px dashed rgba(0, 255, 102, 0.25);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            color: var(--term-dim);
+            text-transform: uppercase;
+        }
+
+        .terminal-title {
+            color: var(--term-green);
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-shadow: 0 0 10px rgba(0, 255, 102, 0.5);
+        }
+
+        .pulse-dot {
+            width: 7px;
+            height: 7px;
+            background: var(--term-green);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--term-green);
+            animation: blink 1s infinite alternate;
+        }
+
+        @keyframes blink {
+            from { opacity: 0.3; }
+            to { opacity: 1; }
+        }
+
+        .terminal-badge {
+            background: rgba(0, 240, 255, 0.1);
+            color: var(--term-cyan);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+        }
+
+        /* Log de Mensajes */
+        .terminal-body {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding-right: 8px;
+            font-size: 13.5px;
+            line-height: 1.6;
+        }
+
+        /* Barra de scroll discreta */
+        .terminal-body::-webkit-scrollbar {
+            width: 4px;
+        }
+        .terminal-body::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 102, 0.3);
+            border-radius: 2px;
+        }
+
+        .term-line {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            animation: lineFadeIn 0.18s ease-out forwards;
+            word-break: break-word;
+        }
+
+        @keyframes lineFadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .term-prompt {
+            color: var(--term-cyan);
+            font-weight: 700;
+            user-select: none;
+        }
+
+        .term-text {
+            color: var(--term-white);
+            flex: 1;
+        }
+
+        .tag-ok {
+            color: var(--term-green);
+            font-weight: 700;
+            text-shadow: 0 0 8px rgba(0, 255, 102, 0.6);
+        }
+
+        .tag-done {
+            color: var(--term-cyan);
+            font-weight: 700;
+            text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+        }
+
+        .tag-warn {
+            color: var(--term-amber);
+            font-weight: 700;
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 15px;
+            background: var(--term-green);
+            margin-left: 4px;
+            vertical-align: middle;
+            animation: cursorBlink 0.75s infinite;
+            box-shadow: 0 0 8px var(--term-green);
+        }
+
+        @keyframes cursorBlink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0; }
+        }
+
+        /* Barra de progreso inferior */
+        .terminal-footer {
+            margin-top: 18px;
+            border-top: 1px dashed rgba(0, 255, 102, 0.25);
+            padding-top: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .progress-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11.5px;
+            color: var(--term-dim);
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 7px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid rgba(0, 255, 102, 0.2);
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #00ff66, #00f0ff);
+            box-shadow: 0 0 12px rgba(0, 255, 102, 0.8);
+            border-radius: 6px;
+            transition: width 0.25s linear;
+        }
+
+        .skip-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: rgba(255, 255, 255, 0.6);
+            padding: 5px 12px;
+            font-family: inherit;
+            font-size: 11px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .skip-btn:hover {
+            border-color: var(--term-green);
+            color: var(--term-green);
+        }
+
+        /* =======================================================
+           FASE 2: SETUP WIZARD (BIENVENIDA MODERNA FUSION OS)
+           ======================================================= */
+        #wizard-screen {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 30%, #151c2e 0%, #07090e 65%, #000000 100%);
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 24px;
+            opacity: 0;
+            transform: scale(0.96);
+            transition: opacity 1.1s cubic-bezier(0.16, 1, 0.3, 1), transform 1.1s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+        }
+
+        #wizard-screen.active {
+            opacity: 1;
+            transform: scale(1);
+            pointer-events: auto;
+        }
+
+        /* Logotipo Estrella 4 Puntas Animado */
+        .logo-wrapper {
+            position: relative;
+            width: 110px;
+            height: 110px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .star-glow {
+            position: absolute;
+            width: 140px;
+            height: 140px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.45) 0%, rgba(139, 92, 246, 0.15) 50%, transparent 75%);
+            filter: blur(14px);
+            border-radius: 50%;
+            animation: pulseGlow 3s infinite ease-in-out;
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.15); opacity: 0.95; }
+        }
+
+        .star-svg {
+            width: 88px;
+            height: 88px;
+            filter: drop-shadow(0 0 16px rgba(255, 255, 255, 0.5));
+            animation: starHover 4s infinite ease-in-out;
+        }
+
+        @keyframes starHover {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-6px) rotate(2deg); }
+        }
+
+        /* Tipografía Cursiva Elegante "hello" */
+        .cursive-hello {
+            font-family: 'Alex Brush', cursive;
+            font-size: 58px;
+            color: #ffffff;
+            margin-bottom: -6px;
+            text-shadow: 0 0 25px rgba(255, 255, 255, 0.45);
+            font-weight: 400;
+            line-height: 1;
+        }
+
+        .system-title {
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #ffffff 40%, #93c5fd 80%, #c4b5fd 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .system-desc {
+            font-size: 13.5px;
+            color: rgba(255, 255, 255, 0.65);
+            text-align: center;
+            max-width: 320px;
+            line-height: 1.5;
+            margin-bottom: 28px;
+        }
+
+        /* Tarjeta de Especificaciones / Features */
+        .features-grid {
+            width: 100%;
+            max-width: 360px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 32px;
+        }
+
+        .feature-card {
+            background: var(--surface-glass);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-glass);
+            border-radius: 14px;
+            padding: 12px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+
+        .feature-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .feature-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .feature-name {
+            font-size: 12px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .feature-sub {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* Botón de Comienzo Píldora Moderno */
+        .start-btn {
+            width: 100%;
+            max-width: 320px;
+            height: 52px;
+            border-radius: 28px;
+            border: none;
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            color: #ffffff;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4);
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .start-btn::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+            transition: 0.6s;
+        }
+
+        .start-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 12px 30px rgba(124, 58, 237, 0.55);
+        }
+
+        .start-btn:hover::after {
+            left: 100%;
+        }
+
+        .start-btn:active {
+            transform: scale(0.98);
+        }
+
+        .arrow-circle {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+        }
+
+        /* Barra de control flotante */
+        .control-bar {
+            position: absolute;
+            bottom: 16px;
+            display: flex;
+            gap: 12px;
+            z-index: 20;
+        }
+
+        .ctrl-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 11px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: all 0.2s;
+        }
+
+        .ctrl-btn:hover {
+            background: rgba(255, 255, 255, 0.18);
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <div class="scanlines"></div>
+    <div class="crt-glow"></div>
+
+    <!-- ==============================================
+         FASE 1: TERMINAL HACKER DE INSTALACIÓN
+         ============================================== -->
+    <div id="terminal-screen">
+        <div class="terminal-header">
+            <div class="terminal-title">
+                <span class="pulse-dot"></span>
+                <span>FUSION_BOOTLOADER_RECOVERY // ROOT_V16</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="terminal-badge">BYPASS_ENGAGED</span>
+                <button class="skip-btn" onclick="skipToWizard()">Saltar</button>
+            </div>
+        </div>
+
+        <div class="terminal-body" id="term-logs">
+            <!-- Las líneas se inyectan dinámicamente con JavaScript -->
+        </div>
+
+        <div class="terminal-footer">
+            <div class="progress-meta">
+                <span id="task-indicator">EJECUTANDO INYECCIÓN DE SISTEMA...</span>
+                <span id="percent-label">0%</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progress-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==============================================
+         FASE 2: SETUP WIZARD (BIENVENIDA FUSION OS)
+         ============================================== -->
+    <div id="wizard-screen">
+        <div class="logo-wrapper">
+            <div class="star-glow"></div>
+            <!-- Estrella Geométrica de 4 Puntas -->
+            <svg class="star-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M50 0C50 27.6142 27.6142 50 0 50C27.6142 50 50 72.3858 50 100C50 72.3858 72.3858 50 100 50C72.3858 50 50 27.6142 50 0Z" fill="url(#star-grad)"/>
+                <defs>
+                    <linearGradient id="star-grad" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+                        <stop stop-color="#FFFFFF"/>
+                        <stop offset="0.5" stop-color="#E2E8F0"/>
+                        <stop offset="1" stop-color="#94A3B8"/>
+                    </linearGradient>
+                </defs>
+            </svg>
+        </div>
+
+        <div class="cursive-hello">hello</div>
+        <div class="system-title">Fusion OS v16</div>
+        <div class="system-desc">El sistema operativo reimaginado para ofrecer velocidad absoluta, gestos fluidos y máxima personalización.</div>
+
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🔊</div>
+                <div class="feature-info">
+                    <span class="feature-name">CometOS Sound</span>
+                    <span class="feature-sub">Barra flotante global</span>
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <div class="feature-info">
+                    <span class="feature-name">Vulkan Engine</span>
+                    <span class="feature-sub">120 FPS ultra fluidos</span>
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🎙️</div>
+                <div class="feature-info">
+                    <span class="feature-name">Firi Voice AI</span>
+                    <span class="feature-sub">Control por voz nativo</span>
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🎨</div>
+                <div class="feature-info">
+                    <span class="feature-name">Harmony Dock</span>
+                    <span class="feature-sub">Smart Grid & Widgets</span>
+                </div>
+            </div>
+        </div>
+
+        <button class="start-btn" onclick="startSystem()">
+            <span>Comenzar Configuración</span>
+            <div class="arrow-circle">→</div>
+        </button>
+
+        <div class="control-bar">
+            <button class="ctrl-btn" onclick="restartSimulation()">↻ Reiniciar Simulación</button>
+            <button class="ctrl-btn" id="sound-btn" onclick="toggleAudio()">🔊 Audio: Activado</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Sintetizador Web Audio API para efectos hacker sin descargas externas
+    let audioCtx = null;
+    let isAudioMuted = false;
+
+    function getAudioContext() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        return audioCtx;
+    }
+
+    function playBeep(freq = 880, type = 'sine', duration = 0.04, gainVal = 0.04) {
+        if (isAudioMuted) return;
+        try {
+            const ctx = getAudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, ctx.currentTime);
+            gain.gain.setValueAtTime(gainVal, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + duration);
+        } catch (_) {}
+    }
+
+    function playSuccessChime() {
+        if (isAudioMuted) return;
+        try {
+            const ctx = getAudioContext();
+            [523.25, 659.25, 783.99, 1046.50].forEach((freq, idx) => {
+                setTimeout(() => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+                    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.35);
+                }, idx * 75);
+            });
+        } catch (_) {}
+    }
+
+    function toggleAudio() {
+        isAudioMuted = !isAudioMuted;
+        document.getElementById('sound-btn').innerText = isAudioMuted ? '🔇 Audio: Silenciado' : '🔊 Audio: Activado';
+    }
+
+    // Secuencia de instalación requerida
+    const installSteps = [
+        { text: "Iniciando secuencia de recuperación y bootstrap...", tag: "SYS", progress: 5, delay: 350 },
+        { text: "Inicializando kernel de Fusion OS...", tag: "INFO", progress: 18, delay: 650 },
+        { text: "Bypasseando protecciones SELinux (Permissive)...", tag: "OK", progress: 32, delay: 500 },
+        { text: "Desmontando partición anterior (Android)...", tag: "OK", progress: 48, delay: 650 },
+        { text: "Borrando sistema operativo anterior y caché...", tag: "DONE", progress: 62, delay: 750 },
+        { text: "Inyectando nuevos paquetes de Fusion OS v16...", tag: "SYS", progress: 76, delay: 700 },
+        { text: "Compilando librerías gráficas Vulkan y zRAM...", tag: "OK", progress: 85, delay: 500 },
+        { text: "Configurando interfaz personalizada y servicios...", tag: "INFO", progress: 94, delay: 650 },
+        { text: "Instalación finalizada con éxito. Cargando asistente...", tag: "DONE", progress: 100, delay: 850 }
+    ];
+
+    const logsContainer = document.getElementById('term-logs');
+    const progressBar = document.getElementById('progress-bar');
+    const percentLabel = document.getElementById('percent-label');
+    const taskIndicator = document.getElementById('task-indicator');
+    const terminalScreen = document.getElementById('terminal-screen');
+    const wizardScreen = document.getElementById('wizard-screen');
+
+    let currentStep = 0;
+    let isTermFinished = false;
+
+    function renderNextLine() {
+        if (currentStep >= installSteps.length) {
+            finishInstallation();
+            return;
+        }
+
+        const step = installSteps[currentStep];
+
+        // Crear elemento de línea
+        const line = document.createElement('div');
+        line.className = 'term-line';
+
+        let tagHtml = '';
+        if (step.tag === 'OK') {
+            tagHtml = '<span class="tag-ok"> [OK]</span>';
+        } else if (step.tag === 'DONE') {
+            tagHtml = '<span class="tag-done"> [Completado]</span>';
+        } else if (step.tag === 'WARN') {
+            tagHtml = '<span class="tag-warn"> [!]</span>';
+        }
+
+        line.innerHTML = `
+            <span class="term-prompt">&gt;</span>
+            <span class="term-text">${step.text}${tagHtml}</span>
+        `;
+
+        logsContainer.appendChild(line);
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+
+        // Sonido de clic/consola
+        playBeep(currentStep % 2 === 0 ? 940 : 1100, 'square', 0.025, 0.02);
+
+        // Actualizar barra de progreso
+        progressBar.style.width = step.progress + '%';
+        percentLabel.innerText = step.progress + '%';
+        taskIndicator.innerText = step.text.toUpperCase();
+
+        currentStep++;
+        setTimeout(renderNextLine, step.delay);
+    }
+
+    function finishInstallation() {
+        if (isTermFinished) return;
+        isTermFinished = true;
+
+        playSuccessChime();
+
+        // Pausa estética antes de la transición suave al asistente
+        setTimeout(() => {
+            terminalScreen.classList.add('fade-out');
+            setTimeout(() => {
+                terminalScreen.style.display = 'none';
+                wizardScreen.classList.add('active');
+            }, 750);
+        }, 600);
+    }
+
+    function skipToWizard() {
+        if (isTermFinished) return;
+        isTermFinished = true;
+        terminalScreen.classList.add('fade-out');
+        setTimeout(() => {
+            terminalScreen.style.display = 'none';
+            wizardScreen.classList.add('active');
+        }, 400);
+    }
+
+    function restartSimulation() {
+        wizardScreen.classList.remove('active');
+        terminalScreen.style.display = 'flex';
+        terminalScreen.classList.remove('fade-out');
+        logsContainer.innerHTML = '';
+        currentStep = 0;
+        isTermFinished = false;
+        progressBar.style.width = '0%';
+        percentLabel.innerText = '0%';
+        taskIndicator.innerText = 'INICIANDO BOOTLOADER...';
+        setTimeout(renderNextLine, 500);
+    }
+
+    function startSystem() {
+        playBeep(1200, 'triangle', 0.1, 0.1);
+        alert("¡Bienvenido a Fusion OS! Configuración inicial completada.");
+    }
+
+    // Iniciar automáticamente tras breve carga
+    window.addEventListener('load', () => {
+        setTimeout(renderNextLine, 600);
+    });
+</script>
+
+</body>
+</html>
