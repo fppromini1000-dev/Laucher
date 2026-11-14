@@ -29,6 +29,11 @@ class LauncherRepository(
     private val settingsDao = database.userSettingsDao()
 
     private val widgetDao = database.widgetDao()
+    private val firiSqlDao = database.firiSqlDao()
+
+    val savedPlacesFlow: Flow<List<FiriSavedPlaceEntity>> = firiSqlDao.getSavedPlacesFlow().flowOn(Dispatchers.IO)
+    val firiMemoryCountFlow: Flow<Int> = firiSqlDao.getMemoryCountFlow().flowOn(Dispatchers.IO)
+    val savedPlacesCountFlow: Flow<Int> = firiSqlDao.getSavedPlacesCountFlow().flowOn(Dispatchers.IO)
 
     val habitEngine = HabitEngine(habitDao)
 
@@ -352,5 +357,131 @@ class LauncherRepository(
     suspend fun deleteFolder(folderId: String) = withContext(Dispatchers.IO) {
         val current = _foldersFlow.value.filterNot { it.id == folderId }
         persistFolders(current)
+    }
+
+    // ==========================================
+    // INTELIGENCIA SQL DE FIRI (Room / SQLite)
+    // ==========================================
+    suspend fun buildFiriSqlContext(
+        query: String,
+        currentHour: Int
+    ): com.example.ai.FiriSqlContextSnapshot = withContext(Dispatchers.IO) {
+        val topOverall = habitDao.getMostUsedAppsOverall(limit = 5)
+        val topOverallText = topOverall.joinToString(", ") { "${it.appName} (${it.totalLaunches}x)" }
+
+        val hourHabits = habitDao.getTopAppsForHour(currentHour, limit = 4)
+        val hourAppsText = hourHabits.joinToString(", ") { "${it.appName} (${it.launchCount}x)" }
+
+        val widgetsSnapshot = widgetDao.getAllWidgetsSnapshot()
+        val notesText = widgetsSnapshot
+            .filter { it.typeId == "NOTES_TASKS" && it.customData.isNotBlank() }
+            .joinToString("; ") { it.customData }
+
+        val pinnedText = appDao.getPinnedCustomizations()
+            .joinToString(", ") { it.packageName.substringAfterLast('.') }
+
+        val terms = extractSignificantTerms(query)
+        val matchedMemories = mutableMapOf<Long, FiriMemoryEntity>()
+        val matchedPlaces = mutableMapOf<String, FiriSavedPlaceEntity>()
+
+        for (term in terms) {
+            firiSqlDao.searchMemories(term, limit = 3).forEach { matchedMemories[it.id] = it }
+            firiSqlDao.searchSavedPlaces(term, limit = 4).forEach { matchedPlaces[it.placeKey] = it }
+        }
+
+        val recentMemories = firiSqlDao.getRecentMemories(limit = 5)
+        val recentPlaces = firiSqlDao.getRecentPlaces(limit = 6)
+        val totalMemories = firiSqlDao.getMemoryCount()
+        val totalPlaces = firiSqlDao.getSavedPlacesCount()
+
+        com.example.ai.FiriSqlContextSnapshot(
+            topAppsSummary = topOverallText,
+            currentHourAppsSummary = hourAppsText,
+            notesSummary = notesText,
+            pinnedAppsSummary = pinnedText,
+            matchingMemories = matchedMemories.values.take(4),
+            recentMemories = recentMemories,
+            matchingPlaces = matchedPlaces.values.take(5),
+            recentPlaces = recentPlaces,
+            totalMemoriesCount = totalMemories,
+            totalSavedPlacesCount = totalPlaces
+        )
+    }
+
+    suspend fun searchSavedPlacesInSql(query: String): List<FiriSavedPlaceEntity> = withContext(Dispatchers.IO) {
+        val terms = extractSignificantTerms(query)
+        if (terms.isEmpty()) return@withContext firiSqlDao.getRecentPlaces(limit = 6)
+        val result = linkedMapOf<String, FiriSavedPlaceEntity>()
+        for (term in terms) {
+            firiSqlDao.searchSavedPlaces(term, limit = 5).forEach { result[it.placeKey] = it }
+        }
+        result.values.toList()
+    }
+
+    suspend fun saveFiriInteractionToSql(
+        query: String,
+        summaryResponse: String,
+        sourceTypes: String,
+        places: List<com.example.ai.FiriMapPlace>
+    ) = withContext(Dispatchers.IO) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.length >= 3 && summaryResponse.isNotBlank()) {
+            val existing = firiSqlDao.findExactMemory(cleanQuery)
+            val keywords = extractSignificantTerms(cleanQuery).joinToString(",")
+            val entity = if (existing != null) {
+                existing.copy(
+                    summaryResponse = summaryResponse.take(360),
+                    sourceTypes = sourceTypes,
+                    hitCount = existing.hitCount + 1,
+                    timestamp = System.currentTimeMillis()
+                )
+            } else {
+                FiriMemoryEntity(
+                    userQuery = cleanQuery,
+                    keywords = keywords,
+                    summaryResponse = summaryResponse.take(360),
+                    sourceTypes = sourceTypes,
+                    hitCount = 1,
+                    timestamp = System.currentTimeMillis()
+                )
+            }
+            firiSqlDao.insertOrUpdateMemory(entity)
+        }
+
+        for (place in places) {
+            val key = (place.placeId?.takeIf { it.isNotBlank() } ?: place.title.lowercase().trim())
+                .replace(Regex("\\s+"), "_")
+            if (key.isBlank()) continue
+            val existingPlace = firiSqlDao.findPlaceByKey(key)
+            val entity = FiriSavedPlaceEntity(
+                placeKey = key,
+                title = place.title,
+                address = place.address,
+                category = place.category,
+                latitude = place.latitude ?: existingPlace?.latitude,
+                longitude = place.longitude ?: existingPlace?.longitude,
+                mapsUri = place.mapsUri.ifBlank { existingPlace?.mapsUri ?: "" },
+                placeId = place.placeId ?: existingPlace?.placeId,
+                searchCount = (existingPlace?.searchCount ?: 0) + 1,
+                lastSearchedAt = System.currentTimeMillis()
+            )
+            firiSqlDao.upsertSavedPlace(entity)
+        }
+    }
+
+    private fun extractSignificantTerms(text: String): List<String> {
+        val stopWords = setOf(
+            "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "en", "con", "por", "para",
+            "que", "qué", "como", "cómo", "donde", "dónde", "cual", "cuál", "quien", "quién", "firi",
+            "mapa", "mapas", "busca", "buscar", "dame", "muestra", "muéstrame", "cerca", "mi", "mí", "mis",
+            "the", "and", "for", "with", "from", "where", "what", "show", "find", "map", "maps", "near", "me", "my"
+        )
+        return text.lowercase()
+            .replace(Regex("[^\\p{L}\\p{N}\\s]"), " ")
+            .split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.length >= 3 && it !in stopWords }
+            .distinct()
+            .take(5)
     }
 }

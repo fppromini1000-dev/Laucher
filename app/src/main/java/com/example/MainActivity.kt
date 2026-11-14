@@ -263,6 +263,9 @@ fun LauncherContent(
     val rmsDb by viewModel.firiAssistant.rmsDb.collectAsStateWithLifecycle()
     val conversationHistory by viewModel.firiAssistant.conversationHistory.collectAsStateWithLifecycle()
     val brainTelemetry by viewModel.firiAssistant.brainTelemetry.collectAsStateWithLifecycle()
+    val sqlStats by viewModel.firiAssistant.sqlStats.collectAsStateWithLifecycle()
+    val isGeneratingImage by viewModel.firiAssistant.isGeneratingImage.collectAsStateWithLifecycle()
+    val imageGenerationStatus by viewModel.firiAssistant.imageGenerationStatus.collectAsStateWithLifecycle()
 
     var isAppLibraryVisible by rememberSaveable { mutableStateOf(false) }
 
@@ -527,14 +530,59 @@ fun LauncherContent(
         )
     }
 
-    // Firi 100% Voice Dialog Overlay
+    // Firi 100% Voice & Multimodal Studio Overlay
     if (isVoiceOverlayOpen) {
+        val handleFiriAction: (com.example.ai.FiriActionResult) -> Unit = { action ->
+            if (action.categoryToFilter != null) {
+                viewModel.selectCategory(action.categoryToFilter)
+            }
+            if (action.openHabitsDashboard) {
+                viewModel.setHabitsDialogOpen(true)
+            }
+            if (action.openLockScreen) {
+                viewModel.setLockScreenVisible(true)
+            }
+            if (action.openLockCustomizer) {
+                viewModel.setVoiceOverlayOpen(false)
+                viewModel.setLockCustomizerOpen(true)
+            }
+            if (action.openSettings) {
+                viewModel.setVoiceOverlayOpen(false)
+                viewModel.setSettingsDialogOpen(true)
+            }
+            if (action.openControlCenter) {
+                viewModel.setControlCenterVisible(true)
+            }
+            if (action.triggerVolumeOverlay) {
+                val am = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+                if (am != null) {
+                    val cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                    val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                    val fraction = if (max > 0) cur.toFloat() / max.toFloat() else 0.5f
+                    val hasOverlay = android.provider.Settings.canDrawOverlays(context) ||
+                            com.example.service.VolumeAccessibilityService.isAccessibilityEnabled(context)
+                    viewModel.updateVolumeFraction(fraction)
+                    if (hasOverlay) {
+                        com.example.service.VolumeOverlayService.showVolume(context, fraction, userInitiated = true)
+                    } else {
+                        viewModel.onVolumeTrigger(fraction)
+                    }
+                }
+            }
+            if (action.appToLaunch != null) {
+                viewModel.launchApp(context, action.appToLaunch)
+            }
+        }
+
         FiriVoiceOrbDialog(
             voiceState = voiceState,
             transcription = transcription,
             rmsDb = rmsDb,
             conversationHistory = conversationHistory,
             brainTelemetry = brainTelemetry,
+            sqlStats = sqlStats,
+            hasLocationPermission = viewModel.firiAssistant.hasLocationPermission(),
+            onLocationGranted = { viewModel.firiAssistant.refreshLocationIfPermitted() },
             onToggleForceOfflineMode = { viewModel.firiAssistant.toggleForceOfflineMode(it) },
             palette = activePalette,
             userSettings = userSettings,
@@ -542,48 +590,9 @@ fun LauncherContent(
                 viewModel.firiAssistant.startListening(
                     userSettings = userSettings,
                     availableApps = allApps,
-                    currentPrediction = currentPrediction
-                ) { action ->
-                    if (action.categoryToFilter != null) {
-                        viewModel.selectCategory(action.categoryToFilter)
-                    }
-                    if (action.openHabitsDashboard) {
-                        viewModel.setHabitsDialogOpen(true)
-                    }
-                    if (action.openLockScreen) {
-                        viewModel.setLockScreenVisible(true)
-                    }
-                    if (action.openLockCustomizer) {
-                        viewModel.setVoiceOverlayOpen(false)
-                        viewModel.setLockCustomizerOpen(true)
-                    }
-                    if (action.openSettings) {
-                        viewModel.setVoiceOverlayOpen(false)
-                        viewModel.setSettingsDialogOpen(true)
-                    }
-                    if (action.openControlCenter) {
-                        viewModel.setControlCenterVisible(true)
-                    }
-                    if (action.triggerVolumeOverlay) {
-                        val am = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-                        if (am != null) {
-                            val cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
-                            val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-                            val fraction = if (max > 0) cur.toFloat() / max.toFloat() else 0.5f
-                            val hasOverlay = android.provider.Settings.canDrawOverlays(context) ||
-                                    com.example.service.VolumeAccessibilityService.isAccessibilityEnabled(context)
-                            viewModel.updateVolumeFraction(fraction)
-                            if (hasOverlay) {
-                                com.example.service.VolumeOverlayService.showVolume(context, fraction, userInitiated = true)
-                            } else {
-                                viewModel.onVolumeTrigger(fraction)
-                            }
-                        }
-                    }
-                    if (action.appToLaunch != null) {
-                        viewModel.launchApp(context, action.appToLaunch)
-                    }
-                }
+                    currentPrediction = currentPrediction,
+                    onAction = handleFiriAction
+                )
             },
             onStopListening = { viewModel.firiAssistant.stopListening() },
             onStopSpeaking = { viewModel.firiAssistant.stopSpeaking() },
@@ -592,48 +601,48 @@ fun LauncherContent(
                     query = query,
                     userSettings = userSettings,
                     availableApps = allApps,
-                    currentPrediction = currentPrediction
-                ) { action ->
-                    if (action.categoryToFilter != null) {
-                        viewModel.selectCategory(action.categoryToFilter)
-                    }
-                    if (action.openHabitsDashboard) {
-                        viewModel.setHabitsDialogOpen(true)
-                    }
-                    if (action.openLockScreen) {
-                        viewModel.setLockScreenVisible(true)
-                    }
-                    if (action.openLockCustomizer) {
-                        viewModel.setVoiceOverlayOpen(false)
-                        viewModel.setLockCustomizerOpen(true)
-                    }
-                    if (action.openSettings) {
-                        viewModel.setVoiceOverlayOpen(false)
-                        viewModel.setSettingsDialogOpen(true)
-                    }
-                    if (action.openControlCenter) {
-                        viewModel.setControlCenterVisible(true)
-                    }
-                    if (action.triggerVolumeOverlay) {
-                        val am = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-                        if (am != null) {
-                            val cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
-                            val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-                            val fraction = if (max > 0) cur.toFloat() / max.toFloat() else 0.5f
-                            val hasOverlay = android.provider.Settings.canDrawOverlays(context) ||
-                                    com.example.service.VolumeAccessibilityService.isAccessibilityEnabled(context)
-                            viewModel.updateVolumeFraction(fraction)
-                            if (hasOverlay) {
-                                com.example.service.VolumeOverlayService.showVolume(context, fraction, userInitiated = true)
-                            } else {
-                                viewModel.onVolumeTrigger(fraction)
-                            }
-                        }
-                    }
-                    if (action.appToLaunch != null) {
-                        viewModel.launchApp(context, action.appToLaunch)
-                    }
-                }
+                    currentPrediction = currentPrediction,
+                    onAction = handleFiriAction
+                )
+            },
+            isGeneratingImage = isGeneratingImage,
+            imageGenerationStatus = imageGenerationStatus,
+            onSubmitImageQuery = { query, editUri, ratio ->
+                viewModel.firiAssistant.processQuery(
+                    query = query,
+                    userSettings = userSettings,
+                    availableApps = allApps,
+                    currentPrediction = currentPrediction,
+                    editImageUriOrPath = editUri,
+                    aspectRatio = ratio,
+                    onAction = handleFiriAction
+                )
+            },
+            onSetHomeWallpaper = { path ->
+                viewModel.updateUserSettings(
+                    userSettings.copy(
+                        homeCustomWallpaperUri = path,
+                        homeWallpaperId = "custom"
+                    )
+                )
+                android.widget.Toast.makeText(
+                    context,
+                    if (userSettings.isSpanish) "Fondo de Inicio actualizado con tu imagen de Firi" else "Home wallpaper updated with your Firi image",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            },
+            onSetLockWallpaper = { path ->
+                viewModel.updateUserSettings(
+                    userSettings.copy(
+                        lockCustomWallpaperUri = path,
+                        lockWallpaperId = "custom"
+                    )
+                )
+                android.widget.Toast.makeText(
+                    context,
+                    if (userSettings.isSpanish) "Fondo de Bloqueo actualizado con tu imagen de Firi" else "Lock screen wallpaper updated with your Firi image",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             },
             onClearConversation = { viewModel.firiAssistant.clearConversation() },
             onDismiss = { viewModel.setVoiceOverlayOpen(false) }

@@ -2,4 +2,17 @@
     <string name="app_name">Firi Launcher</string>
     <string name="accessibility_volume_service_label">Barra de Volumen Firi (Reemplazo Global)</string>
     <string name="accessibility_volume_service_description">Permite a Firi Launcher interceptar las teclas físicas de volumen en cualquier aplicación (TikTok, YouTube, Instagram, etc.), ocultando la barra de sonido predeterminada del sistema y reemplazándola con la barra de volumen moderna Fusion OS de Firi.</string>
+    <string name="firi_open_in_maps">Abrir en Google Maps</string>
+    <string name="firi_navigate">Cómo llegar</string>
+    <string name="firi_expand_map">Ver mapa</string>
+    <string name="firi_location_enable">Usar mi ubicación GPS</string>
+    <string name="firi_sql_badge">SQL</string>
+    <string name="firi_search_badge">Google Search</string>
+    <string name="firi_maps_attribution">Google Maps</string>
+    <string name="firi_image_edit">Editar</string>
+    <string name="firi_image_save">Guardar</string>
+    <string name="firi_image_wallpaper">Usar de fondo</string>
+    <string name="firi_image_pick_photo">Elegir foto para editar</string>
+    <string name="firi_image_generating">Creando imagen con Nano Banana 2.1…</string>
+    <string name="firi_image_editing">Editando imagen con Nano Banana 2.1…</string>
 </resources>

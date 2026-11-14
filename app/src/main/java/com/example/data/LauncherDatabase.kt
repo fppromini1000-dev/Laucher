@@ -10,9 +10,11 @@ import androidx.room.RoomDatabase
         AppEntity::class,
         UsageHabitEntity::class,
         UserSettingsEntity::class,
-        LauncherWidgetEntity::class
+        LauncherWidgetEntity::class,
+        FiriMemoryEntity::class,
+        FiriSavedPlaceEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class LauncherDatabase : RoomDatabase() {
@@ -20,6 +22,7 @@ abstract class LauncherDatabase : RoomDatabase() {
     abstract fun usageHabitDao(): UsageHabitDao
     abstract fun userSettingsDao(): UserSettingsDao
     abstract fun widgetDao(): WidgetDao
+    abstract fun firiSqlDao(): FiriSqlDao
 
     companion object {
         @Volatile

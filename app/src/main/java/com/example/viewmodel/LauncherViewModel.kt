@@ -32,7 +32,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         LauncherDatabase.getDatabase(application.applicationContext)
     )
 
-    val firiAssistant = FiriAssistant(application.applicationContext, viewModelScope)
+    val firiAssistant = FiriAssistant(application.applicationContext, viewModelScope, repository)
     val updateManager = UpdateManager(application.applicationContext, viewModelScope)
 
     val userSettings: StateFlow<UserSettings> = repository.settingsFlow

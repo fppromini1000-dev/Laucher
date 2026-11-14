@@ -1,8 +1,9 @@
 package com.example.ai
 
 import android.content.Context
+import android.location.Geocoder
 import android.media.AudioManager
-import com.example.model.AppCategory
+import android.net.Uri
 import com.example.model.AppInfo
 import com.example.model.HabitPrediction
 import com.example.model.UserSettings
@@ -11,7 +12,6 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.system.measureTimeMillis
 
@@ -29,24 +29,31 @@ data class OnDeviceInferenceResult(
 /**
  * Segundo Cerebro de Firi AI:
  * Motor de inteligencia artificial que corre 100% dentro del procesador del teléfono (CPU/NPU)
- * sin requerir conexión a internet.
+ * apoyado en la base de datos SQLite local (Room) cuando no hay internet.
  */
 class OnDeviceNeuralBrain(private val context: Context) {
 
     val availableCores: Int = Runtime.getRuntime().availableProcessors()
 
     /**
-     * Procesa la consulta del usuario en el procesador local multihilo.
+     * Procesa la consulta del usuario en el procesador local multihilo con contexto SQL.
      */
     suspend fun processQueryLocally(
         query: String,
         userSettings: UserSettings,
         availableApps: List<AppInfo>,
-        currentPrediction: HabitPrediction?
+        currentPrediction: HabitPrediction?,
+        sqlContext: FiriSqlContextSnapshot? = null
     ): OnDeviceInferenceResult = withContext(Dispatchers.Default) {
         var actionResult: FiriActionResult
         val timeMs = measureTimeMillis {
-            actionResult = analyzeLocally(query.trim(), userSettings, availableApps, currentPrediction)
+            actionResult = analyzeLocally(
+                query = query.trim(),
+                userSettings = userSettings,
+                availableApps = availableApps,
+                currentPrediction = currentPrediction,
+                sqlContext = sqlContext
+            )
         }
         OnDeviceInferenceResult(
             actionResult = actionResult,
@@ -60,7 +67,8 @@ class OnDeviceNeuralBrain(private val context: Context) {
         query: String,
         userSettings: UserSettings,
         availableApps: List<AppInfo>,
-        currentPrediction: HabitPrediction?
+        currentPrediction: HabitPrediction?,
+        sqlContext: FiriSqlContextSnapshot?
     ): FiriActionResult {
         val lower = query.lowercase().trim()
         val isEs = userSettings.isSpanish
@@ -72,12 +80,13 @@ class OnDeviceNeuralBrain(private val context: Context) {
             lower.contains("como funcionas sin internet") || lower.contains("cerebro local") ||
             lower.contains("second brain") || lower.contains("offline brain") || lower.contains("offline mode")
         ) {
+            val sqlCount = sqlContext?.let { it.totalMemoriesCount + it.totalSavedPlacesCount } ?: 0
             val msg = if (isEs) {
-                "¡Estás usando mi Segundo Cerebro! Me ejecuto directamente en los $availableCores núcleos del procesador de tu teléfono. Al no haber internet o estar en modo offline, mi motor neural local toma el control en milisegundos para gestionar tus apps, resolver cálculos y asistirte con total privacidad."
+                "¡Estás usando mi Segundo Cerebro! Me ejecuto directamente en los $availableCores núcleos de tu procesador junto a tu base SQLite local ($sqlCount registros SQL guardados). Incluso sin internet puedo abrir apps, consultar tus mapas guardados, leer tus notas y resolver cálculos al instante."
             } else {
-                "You are using my Second Brain! I run directly on your phone's $availableCores CPU cores. Without internet or in offline mode, my on-device neural engine takes over instantly to launch apps, solve math, and assist you with complete privacy."
+                "You are using my Second Brain! I run directly on your phone's $availableCores CPU cores paired with your local SQLite database ($sqlCount SQL records stored). Even offline, I can launch apps, recall saved maps, read your notes, and solve math instantly."
             }
-            return FiriActionResult(spokenResponse = msg)
+            return FiriActionResult(spokenResponse = msg, usedSqlData = sqlCount > 0)
         }
 
         // 2. CONTROL DEL SISTEMA Y LAUNCHER
@@ -111,8 +120,8 @@ class OnDeviceNeuralBrain(private val context: Context) {
         }
 
         if (lower == "habitos" || lower == "hábitos" || lower == "mis habitos" || lower == "rutinas" || lower == "habits") {
-            val msg = if (isEs) "Segundo Cerebro: Abriendo tu panel de hábitos analizado en este dispositivo." else "Second Brain: Opening your on-device habit dashboard."
-            return FiriActionResult(spokenResponse = msg, openHabitsDashboard = true)
+            val msg = if (isEs) "Segundo Cerebro: Abriendo tu panel de hábitos analizado en SQL." else "Second Brain: Opening your SQL-analyzed habit dashboard."
+            return FiriActionResult(spokenResponse = msg, openHabitsDashboard = true, usedSqlData = true)
         }
 
         // Comandos de audio y volumen
@@ -139,7 +148,136 @@ class OnDeviceNeuralBrain(private val context: Context) {
             return FiriActionResult(spokenResponse = msg, triggerVolumeOverlay = true)
         }
 
-        // 3. APERTURA DE APLICACIONES LOCALES
+        // 3. CONSULTAS DE DATOS SQL (Memoria, Notas, Hábitos y Lugares guardados)
+        if (lower.contains("datos sql") || lower.contains("mis datos") || lower.contains("base de datos") ||
+            lower.contains("que recuerdas") || lower.contains("qué recuerdas") || lower.contains("mis recuerdos") ||
+            lower.contains("sql") || lower.contains("my data")
+        ) {
+            val places = sqlContext?.recentPlaces?.map {
+                FiriMapPlace(
+                    title = it.title,
+                    address = it.address,
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                    mapsUri = it.mapsUri,
+                    placeId = it.placeId,
+                    category = it.category,
+                    fromSqlCache = true
+                )
+            } ?: emptyList()
+
+            val msg = buildString {
+                if (isEs) {
+                    append("Consulté tu base de datos SQL local: tienes ${sqlContext?.totalMemoriesCount ?: 0} recuerdos y ${sqlContext?.totalSavedPlacesCount ?: 0} mapas guardados.")
+                    if (!sqlContext?.topAppsSummary.isNullOrBlank()) {
+                        append(" Tus apps más usadas son ${sqlContext?.topAppsSummary}.")
+                    }
+                    if (!sqlContext?.notesSummary.isNullOrBlank()) {
+                        append(" Tus notas activas dicen: ${sqlContext?.notesSummary}.")
+                    }
+                } else {
+                    append("Checked your local SQL database: ${sqlContext?.totalMemoriesCount ?: 0} memories and ${sqlContext?.totalSavedPlacesCount ?: 0} saved maps stored.")
+                    if (!sqlContext?.topAppsSummary.isNullOrBlank()) {
+                        append(" Most used apps: ${sqlContext?.topAppsSummary}.")
+                    }
+                    if (!sqlContext?.notesSummary.isNullOrBlank()) {
+                        append(" Active notes: ${sqlContext?.notesSummary}.")
+                    }
+                }
+            }
+            return FiriActionResult(
+                spokenResponse = msg,
+                mapPlaces = places.take(4),
+                sqlInsightsSummary = "SQLite Room · ${sqlContext?.totalMemoriesCount ?: 0} recuerdos · ${sqlContext?.totalSavedPlacesCount ?: 0} mapas",
+                usedSqlData = true,
+                usedGoogleMaps = places.isNotEmpty()
+            )
+        }
+
+        if (lower.contains("mis notas") || lower.contains("mis tareas") || lower.contains("notas") || lower.contains("recordatorios") || lower == "my notes") {
+            val notes = sqlContext?.notesSummary.orEmpty()
+            val msg = if (notes.isNotBlank()) {
+                if (isEs) "Según tus datos SQL, tus notas actuales son: $notes."
+                else "According to your SQL data, your current notes are: $notes."
+            } else {
+                if (isEs) "Revisé la tabla SQL de widgets y aún no tienes notas guardadas."
+                else "Checked your SQL widget table and you don't have saved notes yet."
+            }
+            return FiriActionResult(
+                spokenResponse = msg,
+                sqlInsightsSummary = "Tabla launcher_widgets (SQL)",
+                usedSqlData = true
+            )
+        }
+
+        // 4. BÚSQUEDA DE MAPAS EN SQL / GEOCODER LOCAL (Offline o respaldo)
+        val isMapIntent = lower.contains("mapa") || lower.contains("map") ||
+            lower.contains("donde esta") || lower.contains("dónde está") ||
+            lower.contains("ubicacion") || lower.contains("ubicación") ||
+            lower.contains("como llegar") || lower.contains("cómo llegar") ||
+            lower.contains("lugares guardados") || lower.contains("saved places")
+        if (isMapIntent) {
+            val cachedPlaces = (sqlContext?.matchingPlaces ?: emptyList())
+                .ifEmpty { sqlContext?.recentPlaces ?: emptyList() }
+                .map {
+                    FiriMapPlace(
+                        title = it.title,
+                        address = it.address,
+                        latitude = it.latitude,
+                        longitude = it.longitude,
+                        mapsUri = it.mapsUri,
+                        placeId = it.placeId,
+                        category = it.category,
+                        fromSqlCache = true
+                    )
+                }
+
+            val cleanTarget = extractPlaceSearchTerm(query)
+            val resolvedPlace = if (cachedPlaces.isNotEmpty() && (lower.contains("guardad") || lower.contains("saved"))) {
+                cachedPlaces
+            } else {
+                val matchingCached = cachedPlaces.filter {
+                    cleanTarget.isNotBlank() && (
+                        it.title.lowercase().contains(cleanTarget.lowercase()) ||
+                            it.address.lowercase().contains(cleanTarget.lowercase())
+                        )
+                }
+                if (matchingCached.isNotEmpty()) {
+                    matchingCached
+                } else {
+                    val fallbackQuery = cleanTarget.ifBlank { query }
+                    val geo = tryGeocodeOffline(fallbackQuery)
+                    listOf(
+                        geo ?: FiriMapPlace(
+                            title = fallbackQuery.replaceFirstChar { it.uppercase() },
+                            address = if (isEs) "Búsqueda directa en Google Maps" else "Direct search in Google Maps",
+                            mapsUri = "https://www.google.com/maps/search/?api=1&query=${Uri.encode(fallbackQuery)}"
+                        )
+                    )
+                }
+            }
+
+            val firstTitle = resolvedPlace.firstOrNull()?.title ?: query
+            val msg = if (isEs) {
+                if (resolvedPlace.any { it.fromSqlCache }) {
+                    "Encontré $firstTitle en tu historial de mapas SQL. Aquí tienes la tarjeta del mapa para abrir la ruta o explorar ubicaciones guardadas."
+                } else {
+                    "Preparé el mapa de $firstTitle en modo local. Toca la tarjeta para ver la vista previa o abrir navegación directa en Google Maps."
+                }
+            } else {
+                "Prepared the map card for $firstTitle locally. Tap the card to preview or open direct navigation in Google Maps."
+            }
+
+            return FiriActionResult(
+                spokenResponse = msg,
+                mapPlaces = resolvedPlace,
+                sqlInsightsSummary = if (resolvedPlace.any { it.fromSqlCache }) "Caché SQL de lugares" else null,
+                usedGoogleMaps = true,
+                usedSqlData = resolvedPlace.any { it.fromSqlCache }
+            )
+        }
+
+        // 5. APERTURA DE APLICACIONES LOCALES
         val openPrefixes = if (isEs) listOf("abre ", "abrir ", "inicia ", "iniciar ", "lanza ", "ejecuta ", "pon ", "entra a ", "ir a ")
         else listOf("open ", "launch ", "start ", "run ", "play ", "go to ")
 
@@ -157,7 +295,6 @@ class OnDeviceNeuralBrain(private val context: Context) {
             }
         }
 
-        // Búsqueda directa por nombre de app si el usuario dijo solo el nombre (ej. "calculadora", "whatsapp", "spotify")
         val directApp = findAppByName(lower, availableApps)
         if (directApp != null && (lower.length >= 4 || lower == directApp.label.lowercase())) {
             val response = if (isEs) "Segundo Cerebro: Ejecutando ${directApp.label} desde el procesador."
@@ -165,7 +302,22 @@ class OnDeviceNeuralBrain(private val context: Context) {
             return FiriActionResult(spokenResponse = response, appToLaunch = directApp)
         }
 
-        // 4. MOTOR MATEMÁTICO Y CALCULADORA ON-DEVICE
+        // 6. RECUERDOS SQL COINCIDENTES CON LA CONSULTA
+        val matchedMemory = sqlContext?.matchingMemories?.firstOrNull()
+        if (matchedMemory != null) {
+            val msg = if (isEs) {
+                "Desde tu memoria SQL local recuerdo esto sobre '${matchedMemory.userQuery}': ${matchedMemory.summaryResponse}"
+            } else {
+                "From local SQL memory regarding '${matchedMemory.userQuery}': ${matchedMemory.summaryResponse}"
+            }
+            return FiriActionResult(
+                spokenResponse = msg,
+                sqlInsightsSummary = "Memoria SQL (${matchedMemory.hitCount}x)",
+                usedSqlData = true
+            )
+        }
+
+        // 7. MOTOR MATEMÁTICO Y CALCULADORA ON-DEVICE
         val mathResult = tryEvaluateMath(lower)
         if (mathResult != null) {
             val msg = if (isEs) "Segundo Cerebro (Cálculo CPU): $mathResult"
@@ -173,7 +325,7 @@ class OnDeviceNeuralBrain(private val context: Context) {
             return FiriActionResult(spokenResponse = msg)
         }
 
-        // 5. CONVERSIONES DE UNIDADES
+        // 8. CONVERSIONES DE UNIDADES
         val conversionResult = tryConvertUnits(lower, isEs)
         if (conversionResult != null) {
             val msg = if (isEs) "Segundo Cerebro (Conversión): $conversionResult"
@@ -181,7 +333,7 @@ class OnDeviceNeuralBrain(private val context: Context) {
             return FiriActionResult(spokenResponse = msg)
         }
 
-        // 6. FECHA, HORA Y TELEMETRÍA DE HARDWARE
+        // 9. FECHA, HORA Y TELEMETRÍA DE HARDWARE
         val timeNow = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
         if (lower.contains("hora") || lower.contains("qué hora") || lower == "time") {
             val msg = if (isEs) "Segundo Cerebro: Son las $timeNow." else "Second Brain: It is currently $timeNow."
@@ -196,37 +348,42 @@ class OnDeviceNeuralBrain(private val context: Context) {
 
         if (lower.contains("procesador") || lower.contains("cpu") || lower.contains("hardware") || lower.contains("nucleos") || lower.contains("núcleos")) {
             val msg = if (isEs) {
-                "Tu dispositivo cuenta con $availableCores núcleos de CPU activos. El Segundo Cerebro de Firi utiliza estos núcleos en paralelo para procesar lenguaje y comandos sin consumir datos móviles ni batería innecesaria."
+                "Tu dispositivo cuenta con $availableCores núcleos de CPU activos. El Segundo Cerebro de Firi utiliza estos núcleos junto con SQLite para responder al instante."
             } else {
-                "Your device features $availableCores active CPU cores. Firi's Second Brain leverages these cores in parallel to process language and intents with zero data usage."
+                "Your device features $availableCores active CPU cores. Firi's Second Brain pairs these cores with SQLite for instant responses."
             }
             return FiriActionResult(spokenResponse = msg)
         }
 
-        // 7. HÁBITOS Y SUGERENCIAS LOCALES
-        if (lower.contains("que hago") || lower.contains("sugerencia") || lower.contains("rutina")) {
-            val topApps = availableApps.take(3).joinToString(", ") { it.label }
+        // 10. HÁBITOS Y SUGERENCIAS LOCALES DESDE SQL
+        if (lower.contains("que hago") || lower.contains("sugerencia") || lower.contains("rutina") || lower.contains("apps uso")) {
+            val topSql = sqlContext?.topAppsSummary?.takeIf { it.isNotBlank() }
+                ?: availableApps.take(3).joinToString(", ") { it.label }
             val msg = if (isEs) {
-                "Según tu historial local aprendido por Firi, en este momento sueles usar: $topApps. Tu procesador local está listo para abrir cualquiera de ellas."
+                "Según tu base SQL de hábitos, tus aplicaciones principales son: $topSql. ¿Cuál te gustaría abrir?"
             } else {
-                "Based on on-device learning, your top apps right now are: $topApps. Ready to launch whichever you prefer."
+                "Based on your SQL habit database, your top apps are: $topSql. Which one would you like to open?"
             }
-            return FiriActionResult(spokenResponse = msg)
+            return FiriActionResult(
+                spokenResponse = msg,
+                sqlInsightsSummary = "Hábitos SQL",
+                usedSqlData = true
+            )
         }
 
-        // 8. CHISTES Y PRODUCTIVIDAD ON-DEVICE
+        // 11. CHISTES Y PRODUCTIVIDAD ON-DEVICE
         if (lower.contains("chiste") || lower.contains("broma") || lower.contains("joke")) {
             val jokesEs = listOf(
                 "¿Por qué el procesador no pasa frío? Porque siempre está ejecutando hilos calientes.",
                 "Hay 10 tipos de personas: las que entienden binario y las que no.",
                 "¿Qué le dice un bit a otro? Nos vemos en el bus de datos.",
                 "¿Por qué los programadores prefieren el modo oscuro? Porque la luz atrae a los bugs.",
-                "Un bucle infinito entró a un bar. El camarero aún sigue sirviéndole la misma copa."
+                "Un SELECT * sin WHERE entró a una base SQL... y se llevó toda la mesa."
             )
             val jokesEn = listOf(
                 "Why do programmers prefer dark mode? Because light attracts bugs.",
                 "There are 10 types of people: those who understand binary, and those who don't.",
-                "Why did the developer go broke? Because he used up all his cache."
+                "A SQL query walks into a bar, walks up to two tables and asks: Can I join you?"
             )
             val joke = if (isEs) jokesEs.random() else jokesEn.random()
             return FiriActionResult(spokenResponse = "Segundo Cerebro: $joke")
@@ -234,36 +391,63 @@ class OnDeviceNeuralBrain(private val context: Context) {
 
         if (lower.contains("consejo") || lower.contains("productividad") || lower.contains("tip")) {
             val tip = if (isEs) {
-                "Consejo del Segundo Cerebro: Enfócate en una sola tarea durante los próximos 25 minutos. La multitarea fragmenta la memoria de trabajo de tu cerebro tanto como la de una CPU saturada."
+                "Consejo del Segundo Cerebro: Enfócate en una sola tarea durante los próximos 25 minutos. La multitarea fragmenta tu memoria de trabajo tanto como una CPU saturada."
             } else {
-                "Second Brain Tip: Focus on one task for 25 minutes. Multitasking fragments cognitive working memory just like an overloaded CPU."
+                "Second Brain Tip: Focus on one task for 25 minutes. Multitasking fragments working memory just like an overloaded CPU."
             }
             return FiriActionResult(spokenResponse = tip)
         }
 
-        // 9. SALUDOS Y EMPATÍA CONVERSACIONAL
+        // 12. SALUDOS Y EMPATÍA CONVERSACIONAL
         if (lower.contains("hola") || lower.contains("buenos dias") || lower.contains("buenas tardes") || lower == "hi" || lower == "hello") {
             val greeting = if (isEs) {
-                "¡Hola, $name! Segundo Cerebro activo y procesando en $availableCores núcleos locales. No tenemos internet en este momento, pero puedo abrir tus apps, calcular y ayudarte con todo en el teléfono. ¿Qué necesitas?"
+                "¡Hola, $name! Segundo Cerebro activo en $availableCores núcleos con ${sqlContext?.totalSavedPlacesCount ?: 0} mapas y ${sqlContext?.totalMemoriesCount ?: 0} recuerdos SQL. Sin internet puedo abrir apps, consultar tus notas y mostrar mapas guardados."
             } else {
-                "Hello, $name! Second Brain active and running on $availableCores local cores. Offline mode engaged, ready to launch apps and assist you instantly."
+                "Hello, $name! Second Brain active on $availableCores cores with ${sqlContext?.totalSavedPlacesCount ?: 0} maps and ${sqlContext?.totalMemoriesCount ?: 0} SQL memories. Ready to launch apps, check notes, and show saved maps."
             }
-            return FiriActionResult(spokenResponse = greeting)
+            return FiriActionResult(spokenResponse = greeting, usedSqlData = sqlContext?.hasRichData == true)
         }
 
         if (lower.contains("gracias") || lower.contains("thank")) {
-            val reply = if (isEs) "¡Un placer absoluto, $name! Mi Segundo Cerebro siempre está listo en tu procesador."
-            else "You're very welcome, $name! My on-device Second Brain is always ready."
+            val reply = if (isEs) "¡Un placer absoluto, $name! Mi Segundo Cerebro y memoria SQL siempre están listos."
+            else "You're very welcome, $name! My on-device Second Brain and SQL memory are always ready."
             return FiriActionResult(spokenResponse = reply)
         }
 
-        // 10. RESPUESTA INTELIGENTE POR DEFECTO DEL SEGUNDO CEREBRO
+        // 13. RESPUESTA INTELIGENTE POR DEFECTO DEL SEGUNDO CEREBRO
         val defaultMsg = if (isEs) {
-            "Segundo Cerebro (Procesador Local): Te escucho atentamente, $name. Al estar sin conexión a internet, estoy operando directamente con tu procesador. Puedes pedirme abrir cualquier aplicación, calcular operaciones matemáticas, silenciar el móvil o consultar tus hábitos."
+            "Segundo Cerebro (Procesador Local): Operando sin conexión con tus $availableCores núcleos y base SQL. Pídeme abrir apps, consultar 'mis datos SQL', calcular operaciones o buscar un mapa guardado."
         } else {
-            "Second Brain (On-Device CPU): I'm listening, $name. Operating purely on your phone's processor without internet. You can ask me to launch any app, solve math, manage sound, or review habits."
+            "Second Brain (On-Device CPU): Operating offline with $availableCores cores and local SQLite. Ask me to launch apps, check 'my SQL data', do math, or open a saved map."
         }
         return FiriActionResult(spokenResponse = defaultMsg)
+    }
+
+    private fun extractPlaceSearchTerm(rawQuery: String): String {
+        return rawQuery.lowercase()
+            .replace(Regex("(dame|muestra|muéstrame|busca|buscar|abre|ver|el|un)?\\s*mapa\\s*(de|del|para|hacia)?"), "")
+            .replace(Regex("(donde esta|dónde está|como llegar a|cómo llegar a|ubicacion de|ubicación de)"), "")
+            .replace(Regex("(show me a|find a|map of|where is|directions to)"), "")
+            .trim()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun tryGeocodeOffline(placeQuery: String): FiriMapPlace? {
+        return try {
+            val geocoder = Geocoder(context, Locale.getDefault())
+            val results = geocoder.getFromLocationName(placeQuery, 1)
+            val addr = results?.firstOrNull() ?: return null
+            val fullAddress = (0..addr.maxAddressLineIndex).joinToString(", ") { addr.getAddressLine(it) }
+            FiriMapPlace(
+                title = addr.featureName ?: placeQuery.replaceFirstChar { it.uppercase() },
+                address = fullAddress,
+                latitude = addr.latitude,
+                longitude = addr.longitude,
+                mapsUri = "https://www.google.com/maps/search/?api=1&query=${addr.latitude},${addr.longitude}"
+            )
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun findAppByName(query: String, apps: List<AppInfo>): AppInfo? {
@@ -288,9 +472,6 @@ class OnDeviceNeuralBrain(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    /**
-     * Resuelve expresiones matemáticas naturales en el procesador.
-     */
     private fun tryEvaluateMath(text: String): String? {
         val cleaned = text
             .replace("cuanto es", "")
@@ -301,7 +482,6 @@ class OnDeviceNeuralBrain(private val context: Context) {
             .replace("calculate", "")
             .trim()
 
-        // Porcentaje: ej. "15% de 200"
         val percentRegex = Regex("""(\d+(?:\.\d+)?)\s*%\s*(?:de|of)\s*(\d+(?:\.\d+)?)""")
         val percentMatch = percentRegex.find(cleaned)
         if (percentMatch != null) {
@@ -312,7 +492,6 @@ class OnDeviceNeuralBrain(private val context: Context) {
             return "$p% de $total = ${formatNumber(res)}"
         }
 
-        // Raíz cuadrada: ej. "raiz cuadrada de 144"
         val sqrtRegex = Regex("""(?:raiz|raíz|sqrt)\s*(?:cuadrada\s*de|de)?\s*(\d+(?:\.\d+)?)""")
         val sqrtMatch = sqrtRegex.find(cleaned)
         if (sqrtMatch != null) {
@@ -323,7 +502,6 @@ class OnDeviceNeuralBrain(private val context: Context) {
             return "√$num = ${formatNumber(res)}"
         }
 
-        // Operaciones aritméticas básicas: +, -, *, /, x, por, entre
         val opPattern = Regex("""(-?\d+(?:\.\d+)?)\s*(\+|\-|\*|\/|x|por|entre|dividido|times|plus|minus)\s*(-?\d+(?:\.\d+)?)""")
         val opMatch = opPattern.find(cleaned)
         if (opMatch != null) {
@@ -346,9 +524,6 @@ class OnDeviceNeuralBrain(private val context: Context) {
         return null
     }
 
-    /**
-     * Resuelve conversiones métricas comunes en el procesador.
-     */
     private fun tryConvertUnits(text: String, isEs: Boolean): String? {
         val kmMilesRegex = Regex("""(\d+(?:\.\d+)?)\s*(km|kilometros|kilómetros|millas|miles)""")
         val kmMilesMatch = kmMilesRegex.find(text)

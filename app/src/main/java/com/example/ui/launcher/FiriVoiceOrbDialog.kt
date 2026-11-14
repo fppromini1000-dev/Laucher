@@ -1,5 +1,10 @@
 package com.example.ui.launcher
 
+import android.Manifest
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -15,6 +20,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import com.example.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,14 +43,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,14 +71,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
 import com.example.ai.FiriChatMessage
 import com.example.ai.FiriVoiceState
 import com.example.model.UserSettings
 import com.example.ui.theme.LauncherPalette
+import java.io.File
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -84,6 +91,9 @@ fun FiriVoiceOrbDialog(
     rmsDb: Float,
     conversationHistory: List<FiriChatMessage> = emptyList(),
     brainTelemetry: com.example.ai.FiriBrainTelemetry = com.example.ai.FiriBrainTelemetry(),
+    sqlStats: Pair<Int, Int> = 0 to 0,
+    hasLocationPermission: Boolean = false,
+    onLocationGranted: (() -> Unit)? = null,
     onToggleForceOfflineMode: ((Boolean) -> Unit)? = null,
     palette: LauncherPalette,
     userSettings: UserSettings,
@@ -91,17 +101,63 @@ fun FiriVoiceOrbDialog(
     onStopListening: () -> Unit,
     onStopSpeaking: () -> Unit,
     onSubmitTextQuery: (String) -> Unit,
+    isGeneratingImage: Boolean = false,
+    imageGenerationStatus: Pair<Boolean, String>? = null,
+    onSubmitImageQuery: ((String, String?, String) -> Unit)? = null,
+    onSetHomeWallpaper: ((String) -> Unit)? = null,
+    onSetLockWallpaper: ((String) -> Unit)? = null,
     onClearConversation: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val isEs = userSettings.isSpanish
     var manualText by remember { mutableStateOf("") }
+    var selectedEditImageUri by remember { mutableStateOf<String?>(null) }
+    var selectedAspectRatio by remember { mutableStateOf("1:1") }
+    var expandedImagePath by remember { mutableStateOf<String?>(null) }
+    var expandedMapState by remember { mutableStateOf<Pair<List<com.example.ai.FiriMapPlace>, Int>?>(null) }
+    var locationGrantedUi by remember(hasLocationPermission) { mutableStateOf(hasLocationPermission) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        locationGrantedUi = granted
+        if (granted) {
+            onLocationGranted?.invoke()
+        }
+    }
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            selectedEditImageUri = uri.toString()
+        }
+    }
     val listState = rememberLazyListState()
 
-    // Auto-scroll hacia el mensaje más reciente
-    LaunchedEffect(conversationHistory.size) {
-        if (conversationHistory.isNotEmpty()) {
-            listState.animateScrollToItem(conversationHistory.size - 1)
+    val dispatchQuery: (String) -> Unit = { prompt ->
+        val editTarget = selectedEditImageUri
+        if (onSubmitImageQuery != null) {
+            onSubmitImageQuery(prompt, editTarget, selectedAspectRatio)
+        } else {
+            onSubmitTextQuery(prompt)
+        }
+        selectedEditImageUri = null
+    }
+
+    val handleSetWallpaper: (String, Boolean) -> Unit = { path, isLock ->
+        if (isLock) {
+            onSetLockWallpaper?.invoke(path)
+        } else {
+            onSetHomeWallpaper?.invoke(path)
+        }
+    }
+
+    // Auto-scroll hacia el mensaje o tarjeta de carga más reciente
+    LaunchedEffect(conversationHistory.size, isGeneratingImage) {
+        val total = conversationHistory.size + (if (isGeneratingImage) 1 else 0)
+        if (total > 0) {
+            listState.animateScrollToItem(total - 1)
         }
     }
 
@@ -295,53 +351,84 @@ fun FiriVoiceOrbDialog(
                             )
                             Text(
                                 text = if (isLocalBrainActive)
-                                    (if (isEs) "100% Sin Internet · ${brainTelemetry.processorCores} núcleos CPU · ${brainTelemetry.lastExecutionTimeMs}ms" else "100% Offline · ${brainTelemetry.processorCores} CPU cores · ${brainTelemetry.lastExecutionTimeMs}ms")
+                                    (if (isEs) "Sin Internet · ${brainTelemetry.processorCores} CPU · SQL: ${sqlStats.first}/${sqlStats.second}" else "Offline · ${brainTelemetry.processorCores} CPU · SQL: ${sqlStats.first}/${sqlStats.second}")
                                 else
-                                    (if (isEs) "En línea · Conexión a Nube Gemini" else "Online · Cloud reasoning"),
+                                    (if (isEs) "En línea · Search + Maps · SQL: ${sqlStats.first}/${sqlStats.second}" else "Online · Search + Maps · SQL: ${sqlStats.first}/${sqlStats.second}"),
                                 fontSize = 9.5.sp,
                                 color = palette.onSurface.copy(alpha = 0.7f)
                             )
                         }
                     }
 
-                    if (onToggleForceOfflineMode != null) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (brainTelemetry.forceOfflineMode)
-                                        Color(0xFF10B981).copy(alpha = 0.22f)
-                                    else
-                                        palette.surfaceVariant
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        if (!locationGrantedUi) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(palette.primary.copy(alpha = 0.14f))
+                                    .clickable {
+                                        locationPermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                                                Manifest.permission.ACCESS_FINE_LOCATION
+                                            )
+                                        )
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 4.dp)
+                                    .testTag("firi_enable_gps_btn")
+                            ) {
+                                Text(
+                                    text = if (isEs) "📍 GPS" else "📍 GPS",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = palette.primary
                                 )
-                                .clickable {
-                                    onToggleForceOfflineMode(!brainTelemetry.forceOfflineMode)
-                                }
-                                .padding(horizontal = 7.dp, vertical = 4.dp)
-                                .testTag("toggle_offline_brain_btn")
-                        ) {
-                            Text(
-                                text = if (brainTelemetry.forceOfflineMode)
-                                    (if (isEs) "Modo Offline Forzado" else "Offline Forced")
-                                else
-                                    (if (isEs) "Probar Sin Internet" else "Test Offline"),
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (brainTelemetry.forceOfflineMode) Color(0xFF10B981) else palette.onSurface
-                            )
+                            }
+                        }
+
+                        if (onToggleForceOfflineMode != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (brainTelemetry.forceOfflineMode)
+                                            Color(0xFF10B981).copy(alpha = 0.22f)
+                                        else
+                                            palette.surfaceVariant
+                                    )
+                                    .clickable {
+                                        onToggleForceOfflineMode(!brainTelemetry.forceOfflineMode)
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 4.dp)
+                                    .testTag("toggle_offline_brain_btn")
+                            ) {
+                                Text(
+                                    text = if (brainTelemetry.forceOfflineMode)
+                                        (if (isEs) "Offline" else "Offline")
+                                    else
+                                        (if (isEs) "Probar CPU" else "Test CPU"),
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (brainTelemetry.forceOfflineMode) Color(0xFF10B981) else palette.onSurface
+                                )
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // ========================================================
                 // ORBE INTERACTIVO DINÁMICO DE FIRI AI
                 // ========================================================
+                val hasHistory = conversationHistory.isNotEmpty()
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(130.dp)
+                        .size(if (hasHistory) 92.dp else 124.dp)
                         .clickable {
                             when (voiceState) {
                                 is FiriVoiceState.Listening -> onStopListening()
@@ -487,14 +574,17 @@ fun FiriVoiceOrbDialog(
                 }
 
                 // ========================================================
-                // HISTORIAL CONVERSACIONAL (Burbujas dinámicas)
+                // HISTORIAL CONVERSACIONAL (Burbujas + Imágenes + Mapas + Search + SQL)
                 // ========================================================
-                if (conversationHistory.isNotEmpty()) {
+                if (conversationHistory.isNotEmpty() || isGeneratingImage) {
+                    val hasRichAttachment = isGeneratingImage || conversationHistory.any {
+                        it.mapPlaces.isNotEmpty() || it.webSources.isNotEmpty() || !it.generatedImagePath.isNullOrBlank()
+                    }
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 90.dp, max = 220.dp)
+                            .heightIn(min = 100.dp, max = if (hasRichAttachment) 320.dp else 230.dp)
                             .padding(vertical = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -505,12 +595,29 @@ fun FiriVoiceOrbDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End
                                 ) {
-                                    Box(
+                                    Column(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
                                             .background(palette.primary)
-                                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalAlignment = Alignment.End
                                     ) {
+                                        if (!msg.sourceImagePath.isNullOrBlank()) {
+                                            val thumbModel: Any = if (msg.sourceImagePath.startsWith("content://") || msg.sourceImagePath.startsWith("file://")) {
+                                                Uri.parse(msg.sourceImagePath)
+                                            } else {
+                                                File(msg.sourceImagePath)
+                                            }
+                                            AsyncImage(
+                                                model = thumbModel,
+                                                contentDescription = if (isEs) "Imagen adjunta" else "Attached image",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .size(72.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .padding(bottom = 4.dp)
+                                            )
+                                        }
                                         Text(
                                             text = msg.text,
                                             color = palette.onPrimary,
@@ -527,6 +634,7 @@ fun FiriVoiceOrbDialog(
                                 ) {
                                     Column(
                                         modifier = Modifier
+                                            .fillMaxWidth(0.95f)
                                             .clip(RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp))
                                             .background(palette.surfaceVariant)
                                             .border(1.dp, palette.cardBorder, RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp))
@@ -553,13 +661,18 @@ fun FiriVoiceOrbDialog(
                                                     .padding(horizontal = 5.dp, vertical = 1.dp)
                                             ) {
                                                 Text(
-                                                    text = if (isCpu)
-                                                        "⚡ CPU · ${msg.executionTimeMs}ms"
-                                                    else
-                                                        "☁️ Nube · ${msg.executionTimeMs}ms",
+                                                    text = when {
+                                                        msg.usedImageModel -> "🎨 Imagen · ${msg.executionTimeMs / 1000}s"
+                                                        isCpu -> "⚡ CPU · ${msg.executionTimeMs}ms"
+                                                        else -> "☁️ Nube · ${msg.executionTimeMs}ms"
+                                                    },
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.SemiBold,
-                                                    color = if (isCpu) Color(0xFF059669) else Color(0xFF2563EB)
+                                                    color = when {
+                                                        msg.usedImageModel -> Color(0xFF8B5CF6)
+                                                        isCpu -> Color(0xFF059669)
+                                                        else -> Color(0xFF2563EB)
+                                                    }
                                                 )
                                             }
                                         }
@@ -570,8 +683,61 @@ fun FiriVoiceOrbDialog(
                                             fontSize = 13.sp,
                                             lineHeight = 18.sp
                                         )
+
+                                        FiriGroundingBadgesRow(
+                                            usedSqlData = msg.usedSqlData,
+                                            usedGoogleSearch = msg.usedGoogleSearch,
+                                            usedGoogleMaps = msg.usedGoogleMaps,
+                                            sqlSummary = msg.sqlInsightsSummary,
+                                            palette = palette
+                                        )
+
+                                        if (!msg.generatedImagePath.isNullOrBlank()) {
+                                            FiriGeneratedImageCard(
+                                                imagePath = msg.generatedImagePath,
+                                                modelUsed = msg.imageModelUsed,
+                                                isSpanish = isEs,
+                                                palette = palette,
+                                                onEditThisImage = { imgPath ->
+                                                    selectedEditImageUri = imgPath
+                                                },
+                                                onSetWallpaper = handleSetWallpaper,
+                                                onOpenFullImage = { imgPath ->
+                                                    expandedImagePath = imgPath
+                                                }
+                                            )
+                                        }
+
+                                        if (msg.mapPlaces.isNotEmpty()) {
+                                            FiriMapPlaceCard(
+                                                places = msg.mapPlaces,
+                                                palette = palette,
+                                                isSpanish = isEs,
+                                                onExpandMap = { places, idx ->
+                                                    expandedMapState = places to idx
+                                                }
+                                            )
+                                        }
+
+                                        if (msg.webSources.isNotEmpty()) {
+                                            FiriWebSourcesBar(
+                                                sources = msg.webSources,
+                                                palette = palette
+                                            )
+                                        }
                                     }
                                 }
+                            }
+                        }
+
+                        if (isGeneratingImage && imageGenerationStatus != null) {
+                            item(key = "firi_generating_image_status") {
+                                FiriImageGeneratingCard(
+                                    isEditing = imageGenerationStatus.first,
+                                    prompt = imageGenerationStatus.second,
+                                    isSpanish = isEs,
+                                    palette = palette
+                                )
                             }
                         }
                     }
@@ -587,24 +753,23 @@ fun FiriVoiceOrbDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    val editPhotoChip = if (isEs) "🖼️ Editar foto" else "🖼️ Edit photo"
                     val suggestions = if (isEs) listOf(
+                        "🎨 Crea una imagen espacial",
+                        editPhotoChip,
+                        "🗺️ Cafés cerca de mí",
+                        "🔍 Noticias de hoy",
+                        "🗄️ Mis datos SQL",
                         "⚡ Segundo cerebro",
-                        "🧮 25 * 4",
-                        "📶 ¿Cómo funcionas sin internet?",
-                        "💬 ¿Cómo estás?",
-                        "🎨 Personalizar bloqueo",
-                        "🔊 Subir volumen",
-                        "💡 Consejo de enfoque",
-                        "📱 Ajustes"
+                        "🔊 Subir volumen"
                     ) else listOf(
+                        "🎨 Create a cosmic art image",
+                        editPhotoChip,
+                        "🗺️ Coffee shops near me",
+                        "🔍 Today's tech news",
+                        "🗄️ My SQL data",
                         "⚡ Second brain",
-                        "🧮 25 * 4",
-                        "📶 How do you work offline?",
-                        "💬 How are you?",
-                        "🎨 Customize lock screen",
-                        "🔊 Volume up",
-                        "💡 Productivity tip",
-                        "📱 Settings"
+                        "🔊 Volume up"
                     )
 
                     suggestions.forEach { chipText ->
@@ -614,7 +779,15 @@ fun FiriVoiceOrbDialog(
                                 .clip(RoundedCornerShape(18.dp))
                                 .background(palette.surfaceVariant.copy(alpha = 0.8f))
                                 .border(1.dp, palette.cardBorder, RoundedCornerShape(18.dp))
-                                .clickable { onSubmitTextQuery(cleanQuery) }
+                                .clickable {
+                                    if (chipText == editPhotoChip) {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    } else {
+                                        dispatchQuery(cleanQuery)
+                                    }
+                                }
                                 .padding(horizontal = 9.dp, vertical = 5.dp)
                                 .testTag("firi_chip_${chipText.take(5)}")
                         ) {
@@ -627,23 +800,158 @@ fun FiriVoiceOrbDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 // ========================================================
-                // CAMPO DE TEXTO MANUAL Y BOTÓN DE ACCIÓN
+                // BARRA DE EDICIÓN DE IMAGEN / PROPORCIÓN (Nano Banana 2.1)
+                // ========================================================
+                val showImageControls = selectedEditImageUri != null ||
+                    manualText.lowercase().let { l ->
+                        l.contains("imagen") || l.contains("dibuja") || l.contains("crea ") ||
+                            l.contains("genera ") || l.contains("image") || l.contains("draw") || l.contains("edit")
+                    }
+
+                AnimatedVisibility(visible = showImageControls) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(palette.surfaceVariant.copy(alpha = 0.92f))
+                            .border(1.dp, palette.primary.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (selectedEditImageUri != null) {
+                                val previewModel: Any = if (selectedEditImageUri!!.startsWith("content://") || selectedEditImageUri!!.startsWith("file://")) {
+                                    Uri.parse(selectedEditImageUri)
+                                } else {
+                                    File(selectedEditImageUri!!)
+                                }
+                                AsyncImage(
+                                    model = previewModel,
+                                    contentDescription = if (isEs) "Foto para editar" else "Photo to edit",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Column {
+                                Text(
+                                    text = if (selectedEditImageUri != null) {
+                                        if (isEs) "Editando foto con Nano Banana" else "Editing photo · Nano Banana"
+                                    } else {
+                                        "Nano Banana 2.1"
+                                    },
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(top = 3.dp)
+                                ) {
+                                    listOf("1:1", "16:9", "9:16").forEach { ratio ->
+                                        val isSel = selectedAspectRatio == ratio
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (isSel) palette.primary else palette.surface)
+                                                .border(0.8.dp, if (isSel) palette.primary else palette.cardBorder, RoundedCornerShape(6.dp))
+                                                .clickable { selectedAspectRatio = ratio }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .testTag("firi_aspect_ratio_$ratio")
+                                        ) {
+                                            Text(
+                                                text = ratio,
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isSel) palette.onPrimary else palette.onBackground
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (selectedEditImageUri != null) {
+                            IconButton(
+                                onClick = { selectedEditImageUri = null },
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .testTag("firi_clear_edit_image_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = if (isEs) "Quitar imagen" else "Remove image",
+                                    tint = palette.onSurface.copy(alpha = 0.75f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ========================================================
+                // CAMPO DE TEXTO MANUAL, SELECTOR DE FOTO Y BOTÓN DE ACCIÓN
                 // ========================================================
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(
+                        onClick = {
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (selectedEditImageUri != null) palette.primary.copy(alpha = 0.18f)
+                                else palette.surfaceVariant
+                            )
+                            .border(
+                                1.dp,
+                                if (selectedEditImageUri != null) palette.primary else palette.cardBorder,
+                                RoundedCornerShape(14.dp)
+                            )
+                            .testTag("firi_pick_image_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddPhotoAlternate,
+                            contentDescription = stringResource(R.string.firi_image_pick_photo),
+                            tint = if (selectedEditImageUri != null) palette.primary else palette.onSurface.copy(alpha = 0.8f),
+                            modifier = Modifier.size(21.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
                     OutlinedTextField(
                         value = manualText,
                         onValueChange = { manualText = it },
                         placeholder = {
                             Text(
-                                if (isEs) "Pregúntale algo a Firi..." else "Ask Firi anything...",
+                                text = when {
+                                    selectedEditImageUri != null -> if (isEs) "Describe qué editar en la foto..." else "Describe edits for the photo..."
+                                    isEs -> "Pregúntale o crea imágenes con Firi..."
+                                    else -> "Ask or generate images with Firi..."
+                                },
                                 fontSize = 12.sp,
-                                color = palette.onSurface.copy(alpha = 0.5f)
+                                color = palette.onSurface.copy(alpha = 0.5f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         },
                         modifier = Modifier
@@ -661,19 +969,20 @@ fun FiriVoiceOrbDialog(
                         )
                     )
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     IconButton(
                         onClick = {
                             if (manualText.isNotBlank()) {
-                                onSubmitTextQuery(manualText)
+                                val textToSubmit = manualText
                                 manualText = ""
+                                dispatchQuery(textToSubmit)
                             } else {
                                 onStartListening()
                             }
                         },
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(48.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(palette.primary)
                             .testTag("firi_send_manual_query_button")
@@ -706,6 +1015,29 @@ fun FiriVoiceOrbDialog(
                     }
                 }
             }
+        }
+
+        expandedMapState?.let { (places, initialIdx) ->
+            FiriFullMapDialog(
+                places = places,
+                initialIndex = initialIdx,
+                palette = palette,
+                isSpanish = isEs,
+                onDismiss = { expandedMapState = null }
+            )
+        }
+
+        expandedImagePath?.let { imgPath ->
+            FiriFullImagePreviewDialog(
+                imagePath = imgPath,
+                isSpanish = isEs,
+                palette = palette,
+                onEditThisImage = { path ->
+                    selectedEditImageUri = path
+                },
+                onSetWallpaper = handleSetWallpaper,
+                onDismiss = { expandedImagePath = null }
+            )
         }
     }
 }
